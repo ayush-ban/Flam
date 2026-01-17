@@ -1,10 +1,7 @@
+import AppRouter from "./navigation/AppRouter.jsx";
+
 function App() {
-  return (
-    <div>
-      <h1>My Website</h1>
-      <p>Project structure is now clean.</p>
-    </div>
-  );
+  return <AppRouter />;
 }
 
 export default App;
