@@ -19,6 +19,7 @@
 
 /* Canvas container */
 .canvas-wrapper {
+  position: relative;
   width: 90vw;
   height: 80vh;
   max-width: 1800px;
@@ -34,4 +35,14 @@
   height: 100%;
   border: 1px solid #ccc;
   cursor: crosshair;
+}
+
+.remote-cursor {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  opacity: 0.8;
 }
