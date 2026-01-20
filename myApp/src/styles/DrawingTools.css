@@ -1,0 +1,23 @@
+.toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
+.toolbar button {
+  padding: 6px 12px;
+  border: 1px solid #ccc;
+  background: #000;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.toolbar button.active {
+  background: #000;
+  color: #fff;
+}
+
+.toolbar input[type="range"] {
+  width: 120px;
+}
