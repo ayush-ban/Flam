@@ -3,6 +3,8 @@ const { Server } = require("socket.io");
 
 const server = http.createServer();
 const onlineUsers = {};
+const strokes = [];
+const redoStacks = {}; // per-user redo
 
 const COLORS = [
   "#e6194b",
@@ -27,42 +29,6 @@ const io = new Server(server, {
   },
 });
 
-// io.on("connection", (socket) => {
-//   // assign color
-//   const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-//   userColors[socket.id] = color;
-
-//   console.log("User connected:", socket.id, color);
-
-//   // send color to this user
-//   socket.emit("userColor", color);
-
-//   socket.on("cursorMove", (data) => {
-//     socket.broadcast.emit("cursorMove", {
-//       socketId: socket.id,
-//       color: userColors[socket.id],
-//       x: data.x,
-//       y: data.y,
-//     });
-//   });
-
-//   socket.on("drawStart", (data) => {
-//     socket.broadcast.emit("drawStart", {
-//       ...data,
-//       color: userColors[socket.id],
-//     });
-//   });
-
-//   socket.on("draw", (data) => {
-//     socket.broadcast.emit("draw", data);
-//   });
-
-//   socket.on("disconnect", () => {
-//     delete userColors[socket.id];
-//     socket.broadcast.emit("cursorLeave", socket.id);
-//   });
-// });
-
 io.on("connection", (socket) => {
   const identityColor = COLORS[Math.floor(Math.random() * COLORS.length)];
 
@@ -77,6 +43,7 @@ io.on("connection", (socket) => {
 
   // send identity color to this user
   socket.emit("userColor", identityColor);
+  socket.emit("strokesUpdate", strokes);
 
   // 🔥 broadcast updated online users list
   io.emit("onlineUsers", Object.values(onlineUsers));
@@ -101,6 +68,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     delete onlineUsers[socket.id];
     delete userColors[socket.id];
+    delete redoStacks[socket.id];
 
     socket.broadcast.emit("cursorLeave", socket.id);
 
@@ -108,6 +76,46 @@ io.on("connection", (socket) => {
     io.emit("onlineUsers", Object.values(onlineUsers));
 
     console.log("User disconnected:", socket.id);
+  });
+
+  socket.on("strokeComplete", (stroke) => {
+    strokes.push({ ...stroke, userId: socket.id });
+    socket.broadcast.emit("strokePreviewEnd", socket.id);
+
+    redoStacks[socket.id] = []; // clear redo on new stroke
+    io.emit("strokesUpdate", strokes);
+  });
+
+  socket.on("undo", () => {
+    // find last stroke by this user
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      if (strokes[i].userId === socket.id) {
+        const [removed] = strokes.splice(i, 1);
+
+        redoStacks[socket.id] ??= [];
+        redoStacks[socket.id].push(removed);
+
+        io.emit("strokesUpdate", strokes);
+        return;
+      }
+    }
+  });
+
+  socket.on("redo", () => {
+    const stack = redoStacks[socket.id];
+    if (!stack || stack.length === 0) return;
+
+    const stroke = stack.pop();
+    strokes.push(stroke);
+
+    io.emit("strokesUpdate", strokes);
+  });
+
+  socket.on("strokePreview", (previewStroke) => {
+    socket.broadcast.emit("strokePreview", {
+      ...previewStroke,
+      userId: socket.id,
+    });
   });
 });
 

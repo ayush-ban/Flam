@@ -6,78 +6,25 @@ import "../styles/DrawPage.css";
 function DrawPage() {
   const canvasRef = useRef(null);
 
+  const currentStrokeRef = useRef(null); // stroke to commit
+  const previewStrokeRef = useRef(null); // local preview
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [tool, setTool] = useState("brush");
   const [color, setColor] = useState("#000000");
   const [strokeWidth, setStrokeWidth] = useState(2);
+
+  const [strokes, setStrokes] = useState([]);
+  const [remotePreviews, setRemotePreviews] = useState({});
   const [cursors, setCursors] = useState({});
   const [onlineUsers, setOnlineUsers] = useState([]);
 
+  /* ================= SOCKET LISTENERS ================= */
+
   useEffect(() => {
-    socket.on("onlineUsers", (users) => {
-      setOnlineUsers(users);
-    });
+    socket.on("strokesUpdate", setStrokes);
+    socket.on("onlineUsers", setOnlineUsers);
 
-    return () => socket.off("onlineUsers");
-  }, []);
-
-  /* Disable scroll only on this page */
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => (document.body.style.overflow = "");
-  }, []);
-
-  /* Resize canvas */
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-
-    const resizeCanvas = () => {
-      const parent = canvas.parentElement;
-      canvas.width = parent.clientWidth;
-      canvas.height = parent.clientHeight;
-
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-    };
-
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-    return () => window.removeEventListener("resize", resizeCanvas);
-  }, []);
-
-  /* 🔴 Remote drawing */
-  useEffect(() => {
-    const ctx = canvasRef.current.getContext("2d");
-
-    socket.on("drawStart", ({ x, y }) => {
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-    });
-
-    socket.on("draw", (data) => {
-      ctx.lineWidth = data.strokeWidth;
-
-      if (data.tool === "eraser") {
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-      } else {
-        ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = data.color; // ✅ server color
-      }
-
-      ctx.lineTo(data.x, data.y);
-      ctx.stroke();
-    });
-
-    return () => {
-      socket.off("drawStart");
-      socket.off("draw");
-    };
-  }, []);
-
-  /* 🔵 Remote cursors */
-  useEffect(() => {
     socket.on("cursorMove", ({ socketId, x, y, color }) => {
       setCursors((prev) => ({
         ...prev,
@@ -93,69 +40,154 @@ function DrawPage() {
       });
     });
 
+    // 🔥 remote live stroke preview
+    socket.on("strokePreview", (stroke) => {
+      setRemotePreviews((prev) => ({
+        ...prev,
+        [stroke.userId]: stroke,
+      }));
+    });
+
+    socket.on("strokePreviewEnd", (userId) => {
+      setRemotePreviews((prev) => {
+        const updated = { ...prev };
+        delete updated[userId];
+        return updated;
+      });
+    });
+
     return () => {
+      socket.off("strokesUpdate");
+      socket.off("onlineUsers");
       socket.off("cursorMove");
       socket.off("cursorLeave");
+      socket.off("strokePreview");
+      socket.off("strokePreviewEnd");
     };
   }, []);
 
-  /* 🟢 Local draw start */
-  const startDrawing = (e) => {
+  /* ================= CANVAS SETUP ================= */
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
-    const rect = canvas.getBoundingClientRect();
 
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const resize = () => {
+      const parent = canvas.parentElement;
+      canvas.width = parent.clientWidth;
+      canvas.height = parent.clientHeight;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+    };
 
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+
+  /* ================= DRAW HELPERS ================= */
+
+  const drawStroke = (ctx, stroke) => {
     ctx.beginPath();
-    ctx.moveTo(x, y);
-    setIsDrawing(true);
+    ctx.lineWidth = stroke.strokeWidth;
 
-    socket.emit("drawStart", { x, y });
-  };
-
-  /* 🟢 Local draw + cursor */
-  const draw = (e) => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    const rect = canvas.getBoundingClientRect();
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    socket.emit("cursorMove", { x, y }); // ✅ no color sent
-
-    if (!isDrawing) return;
-
-    ctx.lineWidth = strokeWidth;
-
-    if (tool === "eraser") {
+    if (stroke.tool === "eraser") {
       ctx.globalCompositeOperation = "destination-out";
       ctx.strokeStyle = "rgba(0,0,0,1)";
     } else {
       ctx.globalCompositeOperation = "source-over";
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = stroke.color;
     }
 
-    ctx.lineTo(x, y);
-    ctx.stroke();
+    stroke.points.forEach((p, i) =>
+      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y),
+    );
 
-    socket.emit("draw", {
-      x,
-      y,
-      tool,
-      strokeWidth,
-      color,
+    ctx.stroke();
+    ctx.closePath();
+    ctx.globalCompositeOperation = "source-over";
+  };
+
+  const redrawCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // committed strokes
+    strokes.forEach((s) => drawStroke(ctx, s));
+
+    // local preview
+    if (previewStrokeRef.current) {
+      drawStroke(ctx, previewStrokeRef.current);
+    }
+
+    // remote previews
+    Object.values(remotePreviews).forEach((s) => {
+      drawStroke(ctx, s);
     });
   };
 
+  useEffect(() => {
+    redrawCanvas();
+  }, [strokes, remotePreviews]);
+
+  /* ================= DRAWING EVENTS ================= */
+
+  const startDrawing = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const stroke = {
+      tool,
+      color,
+      strokeWidth,
+      points: [{ x, y }],
+    };
+
+    previewStrokeRef.current = stroke;
+    currentStrokeRef.current = structuredClone(stroke);
+
+    setIsDrawing(true);
+  };
+
+  const draw = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    socket.emit("cursorMove", { x, y });
+
+    if (!isDrawing || !previewStrokeRef.current) return;
+
+    previewStrokeRef.current.points.push({ x, y });
+    currentStrokeRef.current.points.push({ x, y });
+
+    // 🔥 send live preview to others
+    socket.emit("strokePreview", {
+      tool,
+      color,
+      strokeWidth,
+      points: previewStrokeRef.current.points,
+    });
+
+    redrawCanvas();
+  };
+
   const stopDrawing = () => {
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.closePath();
-    ctx.globalCompositeOperation = "source-over";
+    if (!currentStrokeRef.current) return;
+
+    socket.emit("strokeComplete", currentStrokeRef.current);
+
+    socket.emit("strokePreviewEnd");
+
+    previewStrokeRef.current = null;
+    currentStrokeRef.current = null;
     setIsDrawing(false);
   };
+
+  /* ================= UI ================= */
 
   return (
     <div className="draw-page">
@@ -172,41 +204,42 @@ function DrawPage() {
 
       <div className="online-users">
         <strong>Online Users ({onlineUsers.length})</strong>
-
         <ul>
-          {onlineUsers.map((user) => (
-            <li key={user.id}>
-              <span
-                className="user-dot"
-                style={{ backgroundColor: user.color }}
-              />
-              User {user.id.slice(0, 4)}
+          {onlineUsers.map((u) => (
+            <li key={u.id}>
+              <span className="user-dot" style={{ backgroundColor: u.color }} />
+              User {u.id.slice(0, 4)}
             </li>
           ))}
         </ul>
       </div>
 
       <div className="canvas-wrapper">
-        {Object.entries(cursors).map(([id, cursor]) => (
+        {Object.entries(cursors).map(([id, c]) => (
           <div
             key={id}
             className="remote-cursor"
             style={{
-              left: cursor.x,
-              top: cursor.y,
-              backgroundColor: cursor.color,
+              left: c.x,
+              top: c.y,
+              backgroundColor: c.color,
             }}
           />
         ))}
 
         <canvas
           ref={canvasRef}
+          className="drawing-canvas"
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
           onMouseLeave={stopDrawing}
-          className="drawing-canvas"
         />
+      </div>
+
+      <div className="undo-redo">
+        <button onClick={() => socket.emit("undo")}>Undo</button>
+        <button onClick={() => socket.emit("redo")}>Redo</button>
       </div>
     </div>
   );
