@@ -1,136 +1,107 @@
+### Data flow Diagram
 
-All clients connect to the same Socket.IO server and share a synchronized canvas state.
+User Input (Mouse Events)
+        │
+        ▼
+Client (React)
+  ├─ Local Preview Stroke (Canvas)
+  ├─ Emit strokePreview (WebSocket)
+  │
+  ▼
+Socket.IO Server
+  ├─ Broadcast strokePreview to others
+  │
+  ▼
+Other Clients
+  ├─ Render Remote Preview Stroke
+  │
+  ▼
+Mouse Release
+  ├─ Emit strokeComplete
+  │
+  ▼
+Server
+  ├─ Persist stroke
+  ├─ Broadcast strokesUpdate
+  │
+  ▼
+All Clients
+  ├─ Clear previews
+  ├─ Redraw canvas from authoritative state
 
-## Frontend Architecture
+### WebSocket Protocol
 
-### Key Components
+Core Socket Events
 
-- DrawPage.jsx
-  - Main drawing surface
-- DrawingTools.jsx
-  - Tool selection (brush / eraser)
-- UseSocket.js
-  - Manages connection to backend
+| Event              | Direction        | Purpose                              |
+| ------------------ | ---------------- | ------------------------------------ |
+| `strokePreview`    | Client → Server  | Live drawing preview (not persisted) |
+| `strokePreview`    | Server → Clients | Broadcast preview to others          |
+| `strokePreviewEnd` | Client → Server  | Clear preview after stroke ends      |
+| `strokeComplete`   | Client → Server  | Persist completed stroke             |
+| `strokesUpdate`    | Server → Clients | Broadcast authoritative stroke list  |
 
----
+Cursor Tracking
 
-### Canvas Rendering Strategy
+| Event         | Purpose                             |
+| ------------- | ----------------------------------- |
+| `cursorMove`  | Broadcast real-time cursor position |
+| `cursorLeave` | Remove cursor on disconnect         |
 
-The canvas rendering is divided into **three logical layers** (rendered sequentially):
+Undo/Redo
 
-1. **Committed Strokes**
-   - Fully completed strokes
-   - Received from server
-   - Used for undo/redo
+| Event  | Purpose                    |
+| ------ | -------------------------- |
+| `undo` | Remove last stroke by user |
+| `redo` | Restore last undone stroke |
 
-2. **Local Preview Stroke**
-   - Stroke currently being drawn by the local user
-   - Rendered immediately for responsiveness
+### Undo/Redo Strategy
 
-3. **Remote Preview Strokes**
-   - Strokes currently being drawn by other users
-   - Broadcast live via WebSockets
-   - Not persisted
+Undo and redo are implemented using a server-authoritative model.
 
-This layered approach ensures smooth real-time collaboration while preserving correctness.
+Key Principles
+-Undo/redo operations are global
+-Each user can undo only their own strokes
+-The server maintains:
+  A global strokes[] array
+  A per-user redoStack[]
 
-##  State Management (Frontend)
+Undo Flow
+-User emits undo
+-Server finds the most recent stroke by that user
+-Stroke is removed from strokes[]
+-Stroke is pushed to the user’s redo stack
+-Updated state is broadcast via strokesUpdate
 
-State- Purpose
- `strokes` | Server-authoritative stroke history 
- `remotePreviews` | Live strokes from other users 
- `currentStrokeRef` | Stroke being built locally 
- `previewStrokeRef` | Live preview of local stroke 
- `cursors` | Real-time cursor positions 
- `onlineUsers` | List of connected users 
+Redo Flow
+-User emits redo
+-Server restores the last stroke from redo stack
+-Stroke is reinserted into strokes[]
+-All clients re-render from updated state
 
-React `useRef` is used for mutable drawing data to avoid unnecessary re-renders.
+This guarantees consistent undo/redo across all users.
 
----
+### Performance Decisions
 
-## Backend Architecture (Socket.IO Server)
+Canvas Rendering
+-HTML Canvas API chosen for high-performance drawing
+-Canvas is redrawn from state instead of incremental mutations
 
-### Responsibilities
+State Management
+-useRef used for mutable drawing data to avoid unnecessary re-renders
+-useCallback used to stabilize rendering functions
+-Canvas state isolated per stroke using ctx.save() / ctx.restore()
 
-- Maintain list of connected users
-- Assign unique colors to users
-- Store committed strokes in memory
-- Handle global undo/redo
-- Broadcast real-time cursor and preview events
+Network Optimization
+-Only completed strokes are persisted
+-Live previews are transient and never stored
+-Cursor updates are lightweight and event-based
 
----
+### Conflict Resolution
 
-### Core Server Data Structures
-
-Variable- Description
-
- `strokes[]` | Global list of completed strokes 
- `onlineUsers{}` | Connected users and colors 
- `redoStacks{}` | Per-user redo history 
-
----
-
-### Socket Events
-
-### Drawing Events
-- `strokePreview` → Live stroke preview (not stored)
-- `strokePreviewEnd` → Clear preview
-- `strokeComplete` → Persist stroke
-- `strokesUpdate` → Broadcast authoritative state
-
-### Cursor Events
-- `cursorMove` → Broadcast cursor position
-- `cursorLeave` → Remove cursor
-
-### Undo / Redo
-- `undo` → Removes last stroke by the user
-- `redo` → Restores last undone stroke
-
----
-
-##  Undo / Redo Design
-
-Undo and redo are **global but user-scoped**:
-
-- A user can undo **only their own strokes**
-- Undo updates the global stroke list
-- All clients re-render from server state
-- Redo stacks are maintained per user
-
-This ensures consistency across all connected clients.
-
----
-
-##  Real-Time Synchronization Strategy
-
-- WebSockets are used for low-latency updates
-- Only completed strokes are persisted
-- Preview strokes are transient
-- All clients re-render from the same authoritative state
-
-This prevents desynchronization and visual glitches.
-
-##  Failure & Edge Case Handling
-
-- New clients receive the full canvas state on connect
-- Disconnected users are removed from:
-  - Cursor list
-  - Online users list
-  - Redo stacks
-- Server restart resets state (known limitation)
-
-##  Scalability Considerations
-
-Current architecture is suitable for:
-- Small to medium groups
-- Real-time collaboration demos
-- Educational and prototype use cases
-
-Future scalability improvements:
-- Persistent storage (database)
-- Room-based isolation
-- Throttling / batching socket events
-- Server-side stroke compression
-
-
+The system avoids conflicts by design
+-Each stroke is treated as an atomic unit
+-Strokes are appended in the order received by the server
+-No stroke overwrites another stroke
+-Live previews are visually layered but never persisted
 
