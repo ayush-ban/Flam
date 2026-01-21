@@ -8,9 +8,18 @@ function DrawPage() {
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [tool, setTool] = useState("brush");
-  const [color, setColor] = useState("#000000"); // tool color (optional)
+  const [color, setColor] = useState("#000000");
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [cursors, setCursors] = useState({});
+  const [onlineUsers, setOnlineUsers] = useState([]);
+
+  useEffect(() => {
+    socket.on("onlineUsers", (users) => {
+      setOnlineUsers(users);
+    });
+
+    return () => socket.off("onlineUsers");
+  }, []);
 
   /* Disable scroll only on this page */
   useEffect(() => {
@@ -160,6 +169,22 @@ function DrawPage() {
         strokeWidth={strokeWidth}
         setStrokeWidth={setStrokeWidth}
       />
+
+      <div className="online-users">
+        <strong>Online Users ({onlineUsers.length})</strong>
+
+        <ul>
+          {onlineUsers.map((user) => (
+            <li key={user.id}>
+              <span
+                className="user-dot"
+                style={{ backgroundColor: user.color }}
+              />
+              User {user.id.slice(0, 4)}
+            </li>
+          ))}
+        </ul>
+      </div>
 
       <div className="canvas-wrapper">
         {Object.entries(cursors).map(([id, cursor]) => (

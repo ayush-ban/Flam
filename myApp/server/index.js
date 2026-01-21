@@ -2,6 +2,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 
 const server = http.createServer();
+const onlineUsers = {};
 
 const COLORS = [
   "#e6194b",
@@ -26,30 +27,71 @@ const io = new Server(server, {
   },
 });
 
+// io.on("connection", (socket) => {
+//   // assign color
+//   const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+//   userColors[socket.id] = color;
+
+//   console.log("User connected:", socket.id, color);
+
+//   // send color to this user
+//   socket.emit("userColor", color);
+
+//   socket.on("cursorMove", (data) => {
+//     socket.broadcast.emit("cursorMove", {
+//       socketId: socket.id,
+//       color: userColors[socket.id],
+//       x: data.x,
+//       y: data.y,
+//     });
+//   });
+
+//   socket.on("drawStart", (data) => {
+//     socket.broadcast.emit("drawStart", {
+//       ...data,
+//       color: userColors[socket.id],
+//     });
+//   });
+
+//   socket.on("draw", (data) => {
+//     socket.broadcast.emit("draw", data);
+//   });
+
+//   socket.on("disconnect", () => {
+//     delete userColors[socket.id];
+//     socket.broadcast.emit("cursorLeave", socket.id);
+//   });
+// });
+
 io.on("connection", (socket) => {
-  // assign color
-  const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-  userColors[socket.id] = color;
+  const identityColor = COLORS[Math.floor(Math.random() * COLORS.length)];
 
-  console.log("User connected:", socket.id, color);
+  onlineUsers[socket.id] = {
+    id: socket.id,
+    color: identityColor,
+  };
 
-  // send color to this user
-  socket.emit("userColor", color);
+  userColors[socket.id] = identityColor;
 
-  socket.on("cursorMove", (data) => {
+  console.log("User connected:", socket.id);
+
+  // send identity color to this user
+  socket.emit("userColor", identityColor);
+
+  // 🔥 broadcast updated online users list
+  io.emit("onlineUsers", Object.values(onlineUsers));
+
+  socket.on("cursorMove", ({ x, y }) => {
     socket.broadcast.emit("cursorMove", {
       socketId: socket.id,
-      color: userColors[socket.id],
-      x: data.x,
-      y: data.y,
+      x,
+      y,
+      color: identityColor,
     });
   });
 
   socket.on("drawStart", (data) => {
-    socket.broadcast.emit("drawStart", {
-      ...data,
-      color: userColors[socket.id],
-    });
+    socket.broadcast.emit("drawStart", data);
   });
 
   socket.on("draw", (data) => {
@@ -57,8 +99,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    delete onlineUsers[socket.id];
     delete userColors[socket.id];
+
     socket.broadcast.emit("cursorLeave", socket.id);
+
+    // 🔥 update online users list
+    io.emit("onlineUsers", Object.values(onlineUsers));
+
+    console.log("User disconnected:", socket.id);
   });
 });
 
