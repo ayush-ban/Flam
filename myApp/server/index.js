@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const server = http.createServer();
 const onlineUsers = {};
 const strokes = [];
-const redoStacks = {}; // per-user redo
+const redoStacks = {};
 
 const COLORS = [
   "#e6194b",
@@ -41,11 +41,9 @@ io.on("connection", (socket) => {
 
   console.log("User connected:", socket.id);
 
-  // send identity color to this user
   socket.emit("userColor", identityColor);
   socket.emit("strokesUpdate", strokes);
 
-  // 🔥 broadcast updated online users list
   io.emit("onlineUsers", Object.values(onlineUsers));
 
   socket.on("cursorMove", ({ x, y }) => {
@@ -72,7 +70,6 @@ io.on("connection", (socket) => {
 
     socket.broadcast.emit("cursorLeave", socket.id);
 
-    // 🔥 update online users list
     io.emit("onlineUsers", Object.values(onlineUsers));
 
     console.log("User disconnected:", socket.id);
@@ -82,12 +79,11 @@ io.on("connection", (socket) => {
     strokes.push({ ...stroke, userId: socket.id });
     socket.broadcast.emit("strokePreviewEnd", socket.id);
 
-    redoStacks[socket.id] = []; // clear redo on new stroke
+    redoStacks[socket.id] = [];
     io.emit("strokesUpdate", strokes);
   });
 
   socket.on("undo", () => {
-    // find last stroke by this user
     for (let i = strokes.length - 1; i >= 0; i--) {
       if (strokes[i].userId === socket.id) {
         const [removed] = strokes.splice(i, 1);
@@ -120,5 +116,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(3001, () => {
-  console.log("🚀 Socket server running on http://localhost:3001");
+  console.log("running");
 });
