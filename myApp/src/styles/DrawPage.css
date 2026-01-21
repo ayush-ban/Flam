@@ -1,5 +1,5 @@
 .draw-page {
-  height: 100vh;
+  height: 90vh;
   display: flex;
   flex-direction: column;
   align-items: center;      /* center horizontally */
@@ -77,4 +77,8 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
+}
+
+.undo-redo {
+  margin-top: 15px;
 }

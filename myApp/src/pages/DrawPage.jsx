@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import DrawingTools from "../components/DrawingTools";
 import socket from "../hooks/UseSocket";
 import "../styles/DrawPage.css";
@@ -6,8 +6,8 @@ import "../styles/DrawPage.css";
 function DrawPage() {
   const canvasRef = useRef(null);
 
-  const currentStrokeRef = useRef(null); // stroke to commit
-  const previewStrokeRef = useRef(null); // local preview
+  const currentStrokeRef = useRef(null);
+  const previewStrokeRef = useRef(null);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [tool, setTool] = useState("brush");
@@ -18,8 +18,6 @@ function DrawPage() {
   const [remotePreviews, setRemotePreviews] = useState({});
   const [cursors, setCursors] = useState({});
   const [onlineUsers, setOnlineUsers] = useState([]);
-
-  /* ================= SOCKET LISTENERS ================= */
 
   useEffect(() => {
     socket.on("strokesUpdate", setStrokes);
@@ -40,7 +38,6 @@ function DrawPage() {
       });
     });
 
-    // 🔥 remote live stroke preview
     socket.on("strokePreview", (stroke) => {
       setRemotePreviews((prev) => ({
         ...prev,
@@ -66,8 +63,6 @@ function DrawPage() {
     };
   }, []);
 
-  /* ================= CANVAS SETUP ================= */
-
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
@@ -85,11 +80,13 @@ function DrawPage() {
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  /* ================= DRAW HELPERS ================= */
+  const drawStroke = useCallback((ctx, stroke) => {
+    ctx.save();
 
-  const drawStroke = (ctx, stroke) => {
     ctx.beginPath();
     ctx.lineWidth = stroke.strokeWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
 
     if (stroke.tool === "eraser") {
       ctx.globalCompositeOperation = "destination-out";
@@ -99,40 +96,40 @@ function DrawPage() {
       ctx.strokeStyle = stroke.color;
     }
 
-    stroke.points.forEach((p, i) =>
-      i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y),
-    );
+    stroke.points.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
 
     ctx.stroke();
     ctx.closePath();
-    ctx.globalCompositeOperation = "source-over";
-  };
 
-  const redrawCanvas = () => {
+    ctx.restore();
+  }, []);
+
+  const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+
     const ctx = canvas.getContext("2d");
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // committed strokes
     strokes.forEach((s) => drawStroke(ctx, s));
 
-    // local preview
     if (previewStrokeRef.current) {
       drawStroke(ctx, previewStrokeRef.current);
     }
 
-    // remote previews
     Object.values(remotePreviews).forEach((s) => {
       drawStroke(ctx, s);
     });
-  };
+  }, [strokes, remotePreviews, drawStroke]);
 
   useEffect(() => {
     redrawCanvas();
-  }, [strokes, remotePreviews]);
-
-  /* ================= DRAWING EVENTS ================= */
+  }, [redrawCanvas]);
 
   const startDrawing = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
@@ -164,7 +161,6 @@ function DrawPage() {
     previewStrokeRef.current.points.push({ x, y });
     currentStrokeRef.current.points.push({ x, y });
 
-    // 🔥 send live preview to others
     socket.emit("strokePreview", {
       tool,
       color,
@@ -186,8 +182,6 @@ function DrawPage() {
     currentStrokeRef.current = null;
     setIsDrawing(false);
   };
-
-  /* ================= UI ================= */
 
   return (
     <div className="draw-page">
